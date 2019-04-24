@@ -30,7 +30,7 @@
 		"largest_tau": 1.0,
 		"smallest_tau": 0.5,
 		"alpha": 100.0,
-		"summary_freq": 5,
+		"summary_freq": 1,
 		"batch_size": 100,
 		"smp_per_class": 10,
 		"num_unlabeled": 50000

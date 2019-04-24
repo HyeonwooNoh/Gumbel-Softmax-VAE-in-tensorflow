@@ -18,7 +18,7 @@ class CVAE(object):
         self._sanity_check()
         self.is_training = is_training
 
-        with tf.name_scope('SpeakerRepr'):        
+        with tf.name_scope('SpeakerRepr'):
             self.y_emb = self._unit_embedding(
                 self.arch['y_dim'],
                 self.arch['z_dim'],
@@ -61,8 +61,8 @@ class CVAE(object):
 
 
     def _merge(self, var_list, fan_out, l2_reg=1e-6):
-        ''' 
-        Note: Don't apply BN on this because 'y' 
+        '''
+        Note: Don't apply BN on this because 'y'
               tends to be the same inside a batch.
         '''
         x = 0.
@@ -296,7 +296,7 @@ class CVAE(object):
         '''
         x:
         y_L: true label
-        '''        
+        '''
         y_logit_pred = self._classify(x, is_training=self.is_training)
         y_u_pred = tf.nn.softmax(y_logit_pred)
         y_logsoftmax_pred = tf.nn.log_softmax(y_logit_pred)
@@ -309,7 +309,7 @@ class CVAE(object):
             y = y_L
         else:
             y = y_sample
-        
+
         z_mu, z_lv = self._encode(x, y, is_training=self.is_training)
         z = GaussianSampleLayer(z_mu, z_lv)
 
@@ -347,14 +347,14 @@ class CVAE(object):
             loss = dict()
 
             # Note:
-            #   `log p(y)` should be a constant term if we assume that y 
+            #   `log p(y)` should be a constant term if we assume that y
             #   is equally distributed.
             #   That's why I omitted it.
             #   However, since y is now an approximation, I'm not sure
             #   whether omitting it is correct.
 
             # [TODO] What PDF should I use to compute H(y|x)?
-            #   1. Categorical? But now we have a Continuous y @_@ 
+            #   1. Categorical? But now we have a Continuous y @_@
             #   2. Gumbel-Softmax? But the PDF is.. clumsy
 
             with tf.name_scope('Labeled'):
@@ -406,7 +406,7 @@ class CVAE(object):
                 # J: I chose not to use 'tf.nn.softmax_cross_entropy'
                 #    because it takes logits as arguments but we need
                 #    to subtract `log p` before `mul` p
-                loss['H(y)'] = tf.reduce_mean(                
+                loss['H(y)'] = tf.reduce_mean(
                     tf.reduce_sum(
                         tf.multiply(
                             unlabel['y_pred'],
@@ -414,7 +414,7 @@ class CVAE(object):
                         -1))
 
 
-                # Using Gumbel-Softmax Distribution: 
+                # Using Gumbel-Softmax Distribution:
                 #   1. Incorrect because p(y..y) is a scalar-- unless we can get
                 #      the parametic form of the H(Y).
                 #   2. The numerical value can be VERY LARGE, causing trouble!
@@ -431,22 +431,19 @@ class CVAE(object):
                 # # [TODO] How to define this term? log p(y)
                 # loss['log p(y)'] = - tf.nn.softmax_cross_entropy_with_logits(
                 loss['log p(y)'] = 0.0
-                
+
             loss['KL(z)'] = loss['KL(z_l)'] + loss['KL(z_u)']
             loss['Dis'] = loss['log p(x_l)'] + loss['log p(x_u)']
             loss['H(y)'] = loss['H(y)'] + loss['log p(y)']
 
             # For summaries
             with tf.name_scope('Summary'):
-                # tf.summary.scalar('DKL_x', loss['KL(x)'])
-                tf.summary.scalar('DKL_z', loss['KL(z)'])
-                tf.summary.scalar('MMSE', loss['Dis'])
+                tf.summary.histogram('unlabel/z', unlabel['z'])
+                tf.summary.histogram('unlabel/z_mu', unlabel['z_mu'])
+                tf.summary.histogram('unlabel/z_lv', unlabel['z_lv'])
 
-                tf.summary.histogram('z_s', unlabel['z'])
-
-                tf.summary.histogram('z_mu_s', unlabel['z_mu'])
-
-                tf.summary.histogram('z_lv_s', unlabel['z_lv'])
+                for k, v in loss.items():
+                    tf.summary.scalar('{}'.format(k), v)
                 # tf.summary.histogram('z_lv_t', t['z_lv'])
 
                 # tf.summary.histogram('y_logit', unlabel['y_logit'])

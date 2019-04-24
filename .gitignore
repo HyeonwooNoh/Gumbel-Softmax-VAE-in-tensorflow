@@ -1,5 +1,7 @@
 *.pyc
+*.swp
 old_*/*
+.ropeproject
 ./*.png
 ./*.jpg
 sprite*

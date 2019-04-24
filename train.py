@@ -169,8 +169,8 @@ N_TEST = 10000
 
 def main():
 
-    if not os.path.isdir(args.logdir):
-        os.mkdir(args.logdir)
+    if not os.path.exists(args.logdir):
+        os.makedirs(args.logdir)
 
     with open('architecture.json') as f:
         arch = json.load(f)
@@ -209,6 +209,9 @@ def main():
     Y_pred = tf.one_hot(label_pred, arch['y_dim'])
     Xh2 = net.decode(Z_u, Y_pred)
 
+    ph_accuracy = tf.placeholder(shape=(), dtype=tf.float32)
+    tf.summary.scalar('eval/accuracy', ph_accuracy)
+
     thumbnail = make_thumbnail(Y_u, Z_u, arch, net)
 
     opt = get_optimization_ops(loss, arch=arch)
@@ -231,19 +234,18 @@ def main():
             allow_soft_placement=True,
             gpu_options=tf.GPUOptions(allow_growth=True))
         sess = tf.Session(config=sess_config)
-            
+
     # sess = tf.Session()
     init = tf.global_variables_initializer()
     sess.run(init)
 
-
-    # writer = tf.train.SummaryWriter(args.logdir)  # TODO
-    # writer.add_graph(tf.get_default_graph())  # TODO
-    # summary_op = tf.merge_all_summaries()  # TODO
+    writer = tf.summary.FileWriter(args.logdir, sess.graph)
+    train_summary_op = tf.summary.merge_all(scope='loss/Summary')
+    eval_summary_op = tf.summary.merge_all(scope='eval')
     saver = tf.train.Saver()
 
     # ===============================
-    # [TODO] 
+    # [TODO]
     #   1. batcher class
     #      1) for train and for test
     #      2) binarization
@@ -284,10 +286,11 @@ def main():
                 if it == (N_ITER -1):
                     # b, y, xh, xh2, summary = sess.run(    # TODO
                     #     [X_u, Y_u, Xh, Xh2, summary_op],  # TODO
-                    b, y, xh, xh2 = sess.run(
-                        [X_u, Y_u, Xh, Xh2],
+                    b, y, xh, xh2, train_summary = sess.run(
+                        [X_u, Y_u, Xh, Xh2, train_summary_op],
                         {X_u: batch,
                          net.tau: tau})
+                    writer.add_summary(train_summary, step)
 
                     b = reshape(b, sqrt_bz)
                     xh = reshape(xh, sqrt_bz)
@@ -353,6 +356,8 @@ def main():
                                 f.write('{:4d} '.format(cm[i, j]))
                             f.write('\n')
                         acc = metrics.accuracy_score(y_t, y_p)
+                        eval_summary = sess.run(eval_summary_op, {ph_accuracy: acc})
+                        writer.add_summary(eval_summary, step)
                         f.write('Accuracy: {:.4f}\n'.format(acc))
                         f.write('\n\n')
     except KeyboardInterrupt:
