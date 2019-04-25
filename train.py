@@ -17,6 +17,7 @@ args = tf.app.flags.FLAGS
 tf.app.flags.DEFINE_string('logdir', 'tmp', 'log dir')
 tf.app.flags.DEFINE_string('datadir', 'dataset', 'dir to dataset')
 tf.app.flags.DEFINE_string('gpu_cfg', None, 'GPU config file')
+tf.app.flags.DEFINE_bool('meta', False, 'Use meta regularizer')
 # tf.app.flags.DEFINE_integer('epoch', 0, 'num of epochs')
 
 class MNISTLoader(object):
@@ -84,7 +85,8 @@ class MNISTLoader(object):
     def pick_supervised_samples(self, smp_per_class=10):
         ''' [TODO] improve it '''
         idx = np.arange(self.y_l.shape[0])
-        np.random.shuffle(idx)
+        rng_state = np.random.RandomState(seed=123)
+        rng_state.shuffle(idx)
         x = self.x_l[idx]
         y = self.y_l[idx]
         index = list()
@@ -116,8 +118,13 @@ def get_optimization_ops(loss, arch):
     opt_g = optimizer_g.minimize(
         obj_Ez,
         var_list=trainables)
+    generator_vars = tf.trainable_variables('Generator')
+    encoder_vars = tf.trainable_variables('Encoder')
+    meta_obj = loss['GradReg'] * arch['training']['meta_outer_update_alpha']
+    opt_meta = optimizer_g.minimize(meta_obj,
+                                    var_list=generator_vars + encoder_vars)
 
-    return dict(g=opt_g)
+    return dict(g=opt_g, meta=opt_meta)
 
 
 def halflife(t, N0=1., T_half=1., thresh=0.0):
@@ -274,10 +281,16 @@ def main():
 
                 batch = np.random.binomial(1, x_u[idx])
 
-                _, l_x, l_z, l_y, l_l = sess.run(
-                    [opt['g'], loss['Dis'], loss['KL(z)'], loss['H(y)'], loss['Labeled']],
-                    {X_u: batch,
-                     net.tau: tau})
+                if args.meta:
+                    _, _, l_x, l_z, l_y, l_l = sess.run(
+                        [opt['g'], opt['meta'], loss['Dis'], loss['KL(z)'], loss['H(y)'], loss['Labeled']],
+                        {X_u: batch,
+                        net.tau: tau})
+                else:
+                    _, l_x, l_z, l_y, l_l = sess.run(
+                        [opt['g'], loss['Dis'], loss['KL(z)'], loss['H(y)'], loss['Labeled']],
+                        {X_u: batch,
+                        net.tau: tau})
 
                 msg = 'Ep [{:03d}/{:d}]-It[{:03d}/{:d}]: Lx: {:6.2f}, KL(z): {:4.2f}, L:{:.2e}: H(u): {:.2e}'.format(
                     ep, N_EPOCH, it, N_ITER, l_x, l_z, l_l, l_y)

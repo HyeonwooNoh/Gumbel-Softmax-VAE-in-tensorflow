@@ -33,6 +33,8 @@
 		"summary_freq": 1,
 		"batch_size": 100,
 		"smp_per_class": 10,
-		"num_unlabeled": 50000
+		"num_unlabeled": 50000,
+        "meta_inner_update_lr": 1e-4,
+        "meta_outer_update_alpha": 100
 	}
 }

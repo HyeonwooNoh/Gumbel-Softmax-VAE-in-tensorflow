@@ -305,20 +305,28 @@ class CVAE(object):
         y_sample = tf.nn.softmax(y_logit_sample / self.tau)
         y_logsoftmax_sample = tf.nn.log_softmax(y_logit_sample)
 
-        if y_L is not None:
-            y = y_L
-        else:
-            y = y_sample
-
-        z_mu, z_lv = self._encode(x, y, is_training=self.is_training)
+        z_mu, z_lv = self._encode(x, y_sample, is_training=self.is_training)
         z = GaussianSampleLayer(z_mu, z_lv)
 
-        xh, xh_sig_logit = self._generate(z, y, is_training=self.is_training)
+        xh, xh_sig_logit = self._generate(z, y_sample, is_training=self.is_training)
+
+        # labeled reconstruction
+        if y_L is not None:
+            z_mu_L, z_lv_L = self._encode(x, y_L, is_training=self.is_training)
+            z_L = GaussianSampleLayer(z_mu, z_lv)
+
+            xh_L, xh_sig_logit_L = self._generate(z, y_L, is_training=self.is_training)
+        else:
+            z_mu_L, z_lv_L, z_L = None, None, None
+            xh_L, xh_sig_logit_L = None, None
 
         return dict(
             z=z,
             z_mu=z_mu,
             z_lv=z_lv,
+            z_L=z_L,
+            z_mu_L=z_mu_L,
+            z_lv_L=z_lv_L,
             y_pred=y_u_pred,
             y_logsoftmax_pred=y_logsoftmax_pred,
             y_logit_pred=y_logit_pred,
@@ -326,8 +334,10 @@ class CVAE(object):
             y_logit_sample=y_logit_sample,
             y_logsoftmax_sample=y_logsoftmax_sample,
             xh=xh,
-            xh_sig_logit=xh_sig_logit
-            )
+            xh_sig_logit=xh_sig_logit,
+            xh_L=xh_L,
+            xh_sig_logit_L=xh_sig_logit_L,
+        )
 
 
     def loss(self, x_u, x_l, y_l):
@@ -358,8 +368,8 @@ class CVAE(object):
             #   2. Gumbel-Softmax? But the PDF is.. clumsy
 
             with tf.name_scope('Labeled'):
-                z_mu = labeled['z_mu']
-                z_lv = labeled['z_lv']
+                z_mu = labeled['z_mu_L']
+                z_lv = labeled['z_lv_L']
                 loss['KL(z_l)'] = tf.reduce_mean(
                     GaussianKLD(
                         z_mu, z_lv,
@@ -368,7 +378,7 @@ class CVAE(object):
                 loss['log p(x_l)'] = tf.reduce_mean(
                     tf.reduce_sum(
                         tf.nn.sigmoid_cross_entropy_with_logits(
-                            logits=slim.flatten(labeled['xh_sig_logit']),
+                            logits=slim.flatten(labeled['xh_sig_logit_L']),
                             labels=slim.flatten(x_l)),
                         1))
 
@@ -377,6 +387,20 @@ class CVAE(object):
                         logits=labeled['y_logit_pred'],
                         labels=y_l))
 
+                unlabeled_recon_loss = tf.reduce_mean(
+                    tf.reduce_sum(
+                        tf.nn.sigmoid_cross_entropy_with_logits(
+                            logits=slim.flatten(labeled['xh_sig_logit']),
+                            labels=slim.flatten(x_l)),
+                        1))
+                unlabeled_recon_grad = tf.gradients(
+                    unlabeled_recon_loss, labeled['y_logit_pred'])
+                meta_update_lr = self.arch['training']['meta_inner_update_lr']
+                grad_logit = tf.stop_gradient(labeled['y_logit_pred'])\
+                    - meta_update_lr * unlabeled_recon_grad[0]
+                loss['GradReg'] = tf.reduce_mean(
+                    tf.nn.softmax_cross_entropy_with_logits(
+                        logits=grad_logit, labels=y_l))
 
             with tf.name_scope('Unlabeled'):
                 z_mu = unlabel['z_mu']
