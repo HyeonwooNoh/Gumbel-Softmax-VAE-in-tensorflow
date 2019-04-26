@@ -17,8 +17,7 @@ args = tf.app.flags.FLAGS
 tf.app.flags.DEFINE_string('logdir', 'tmp', 'log dir')
 tf.app.flags.DEFINE_string('datadir', 'dataset', 'dir to dataset')
 tf.app.flags.DEFINE_string('gpu_cfg', None, 'GPU config file')
-tf.app.flags.DEFINE_bool('meta', False, 'Use meta regularizer')
-# tf.app.flags.DEFINE_integer('epoch', 0, 'num of epochs')
+
 
 class MNISTLoader(object):
     '''
@@ -133,10 +132,11 @@ def halflife(t, N0=1., T_half=1., thresh=0.0):
     return np.asarray(Nt).reshape([1,])
 
 
-def reshape(b, sqrt_bz):
-    b = np.reshape(b, [sqrt_bz, sqrt_bz, 28, 28])
+def reshape(b, h, w=None):
+    if w is None: w = h
+    b = np.reshape(b, [h, w, 28, 28])
     b = np.transpose(b, [0, 2, 1, 3])
-    b = np.reshape(b, [sqrt_bz*28, sqrt_bz*28])
+    b = np.reshape(b, [h*28, w*28])
     return b
 
 
@@ -174,6 +174,7 @@ def imshow(img_list, filename, titles=None):
 
 N_TEST = 10000
 
+
 def main():
 
     if not os.path.exists(args.logdir):
@@ -181,6 +182,8 @@ def main():
 
     with open('architecture.json') as f:
         arch = json.load(f)
+        print('\narchitecture.json is loaded\n')
+        json.dump(arch, open('{}/arch.json'.format(args.logdir), 'w'))
 
     dataset = MNISTLoader(args.datadir)
     dataset.divide_semisupervised(N_u=arch['training']['num_unlabeled'])
@@ -189,8 +192,7 @@ def main():
     x_u = dataset.x_u
     x_t, y_t = dataset.x_t, dataset.y_t
     x_1, _ = dataset.pick_supervised_samples(smp_per_class=1)
-
-    x_l_show = reshape(x_s, 10)
+    x_l_show = reshape(x_s, 10, arch['training']['smp_per_class'])
     imshow([x_l_show], os.path.join(args.logdir, 'x_labeled.png'))
 
     batch_size = arch['training']['batch_size']
@@ -280,8 +282,7 @@ def main():
                     thresh=arch['training']['smallest_tau'])
 
                 batch = np.random.binomial(1, x_u[idx])
-
-                if args.meta:
+                if arch['training']['use_meta_gradient']:
                     _, _, l_x, l_z, l_y, l_l = sess.run(
                         [opt['g'], opt['meta'], loss['Dis'], loss['KL(z)'], loss['H(y)'], loss['Labeled']],
                         {X_u: batch,
