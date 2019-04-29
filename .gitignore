@@ -13,4 +13,4 @@ logdir/
 ./*.pyc
 output/
 tmp*/
-
+.ipynb_checkpoints
