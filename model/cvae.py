@@ -132,13 +132,14 @@ class CVAE(object):
         subnet = self.arch['encoder']
         h, w, c = self.arch['hwc']
 
-        y2x = slim.fully_connected(
-            y,
-            h * w * c,
-            weights_regularizer=slim.l2_regularizer(subnet['l2-reg']),
-            # normalizer_fn=None,
-            activation_fn=tf.nn.sigmoid)
-        y2x = tf.reshape(y2x, [-1, h, w, c])
+        with tf.variable_scope('y_guider'):
+            y2x = slim.fully_connected(
+                y,
+                h * w * c,
+                weights_regularizer=slim.l2_regularizer(subnet['l2-reg']),
+                # normalizer_fn=None,
+                activation_fn=tf.nn.sigmoid)
+            y2x = tf.reshape(y2x, [-1, h, w, c])
 
         x = tf.concat([x, y2x], 3)
 
@@ -185,8 +186,9 @@ class CVAE(object):
 
         # y = tf.nn.embedding_lookup(self.y_emb, y)
 
-        x = self._merge([z, y], subnet['merge_dim'])
-        x = lrelu(x)
+        with tf.variable_scope('y_guider'):
+            x = self._merge([z, y], subnet['merge_dim'])
+            x = lrelu(x)
         with slim.arg_scope(
             [slim.batch_norm],
             scale=True, scope='BN',

@@ -36,6 +36,7 @@
 		"num_unlabeled": 50000,
         "meta_inner_update_lr": 1e-4,
         "meta_outer_update_alpha": 100,
-        "use_meta_gradient": true
+        "fix_y_guider_for_unlabeled": false,
+        "use_meta_gradient": false
 	}
 }

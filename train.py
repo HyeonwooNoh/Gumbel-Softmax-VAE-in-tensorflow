@@ -110,20 +110,41 @@ def get_optimization_ops(loss, arch):
 
     a = arch['training']['alpha']
 
-    obj_Ez = loss['KL(z)'] + loss['Dis'] - loss['H(y)'] + a * loss['Labeled']  # + a * loss['H(y)']
+    labeled_obj = loss['KL(z_l)'] + loss['log p(x_l)'] \
+        + a * loss['Labeled']  # + a * loss['H(y)']
+    unlabeled_obj = loss['KL(z_u)'] + loss['log p(x_u)'] - loss['H(y)']
+    obj_Ez = labeled_obj + unlabeled_obj
+
+    optimize_list = []
 
     trainables = tf.trainable_variables()
     trainables = [v for v in trainables if 'Tau' not in v.name]
-    opt_g = optimizer_g.minimize(
-        obj_Ez,
-        var_list=trainables)
+    y_embed_vars = tf.trainable_variables('y_embedding')
+    classifier_vars = tf.trainable_variables('Classifier')
     generator_vars = tf.trainable_variables('Generator')
     encoder_vars = tf.trainable_variables('Encoder')
-    meta_obj = loss['GradReg'] * arch['training']['meta_outer_update_alpha']
-    opt_meta = optimizer_g.minimize(meta_obj,
-                                    var_list=generator_vars + encoder_vars)
 
-    return dict(g=opt_g, meta=opt_meta)
+    # Labeled loss optimization
+    optimize_list.append(
+        optimizer_g.minimize(labeled_obj, var_list=trainables)
+    )
+
+    # Unlabeled loss optimization
+    if arch['training']['fix_y_guider_for_unlabeled']:
+        trainables_not_y_guider = [v for v in trainables if 'y_guider' not in v.name]
+    else:
+        trainables_not_y_guider = trainables
+    optimize_list.append(
+        optimizer_g.minimize(unlabeled_obj, var_list=trainables_not_y_guider)
+    )
+
+    # Meta loss optimization
+    if arch['training']['use_meta_gradient']:
+        meta_obj = loss['GradReg'] * arch['training']['meta_outer_update_alpha']
+        optimize_list.append(
+            optimizer_g.minimize(meta_obj, var_list=generator_vars + encoder_vars)
+        )
+    return optimize_list
 
 
 def halflife(t, N0=1., T_half=1., thresh=0.0):
@@ -223,7 +244,7 @@ def main():
 
     thumbnail = make_thumbnail(Y_u, Z_u, arch, net)
 
-    opt = get_optimization_ops(loss, arch=arch)
+    optimize_list = get_optimization_ops(loss, arch=arch)
 
 
     if args.gpu_cfg:
@@ -282,16 +303,12 @@ def main():
                     thresh=arch['training']['smallest_tau'])
 
                 batch = np.random.binomial(1, x_u[idx])
-                if arch['training']['use_meta_gradient']:
-                    _, _, l_x, l_z, l_y, l_l = sess.run(
-                        [opt['g'], opt['meta'], loss['Dis'], loss['KL(z)'], loss['H(y)'], loss['Labeled']],
-                        {X_u: batch,
-                        net.tau: tau})
-                else:
-                    _, l_x, l_z, l_y, l_l = sess.run(
-                        [opt['g'], loss['Dis'], loss['KL(z)'], loss['H(y)'], loss['Labeled']],
-                        {X_u: batch,
-                        net.tau: tau})
+
+                operations = [loss['Dis'], loss['KL(z)'], loss['H(y)'], loss['Labeled']]
+
+                outputs = sess.run(
+                    operations + optimize_list, {X_u: batch, net.tau: tau})
+                l_x, l_z, l_y, l_l = outputs[:4]
 
                 msg = 'Ep [{:03d}/{:d}]-It[{:03d}/{:d}]: Lx: {:6.2f}, KL(z): {:4.2f}, L:{:.2e}: H(u): {:.2e}'.format(
                     ep, N_EPOCH, it, N_ITER, l_x, l_z, l_l, l_y)
