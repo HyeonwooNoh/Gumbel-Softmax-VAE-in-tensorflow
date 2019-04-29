@@ -18,12 +18,6 @@ class CVAE(object):
         self._sanity_check()
         self.is_training = is_training
 
-        with tf.name_scope('SpeakerRepr'):
-            self.y_emb = self._unit_embedding(
-                self.arch['y_dim'],
-                self.arch['z_dim'],
-                'y_embedding')
-
         with tf.variable_scope('Tau'):
             self.tau = tf.nn.relu(
                 10. * tf.Variable(
@@ -183,8 +177,6 @@ class CVAE(object):
         subnet = self.arch['generator']
         n_layer = len(subnet['output'])
         h, w, c = subnet['hwc']
-
-        # y = tf.nn.embedding_lookup(self.y_emb, y)
 
         with tf.variable_scope('y_guider'):
             x = self._merge([z, y], subnet['merge_dim'])
@@ -470,63 +462,5 @@ class CVAE(object):
 
                 for k, v in loss.items():
                     tf.summary.scalar('{}'.format(k), v)
-                # tf.summary.histogram('z_lv_t', t['z_lv'])
-
-                # tf.summary.histogram('y_logit', unlabel['y_logit'])
-                # tf.summary.histogram('y', unlabel['y'])
 
         return loss
-
-    # def sample(self, z=128):
-    #     ''' Generate fake samples given `z`
-    #     if z is not given or is an `int`,
-    #     this fcn generates (z=128) samples
-    #     '''
-    #     z = tf.random_uniform(
-    #         shape=[z, self.arch['z_dim']],
-    #         minval=-1.0,
-    #         maxval=1.0,
-    #         name='z_test')
-    #     return self._generate(z, is_training=False)
-
-    def encode(self, x):
-
-        y_logit = self._classify(x, is_training=False)
-        y = tf.nn.softmax(y_logit / self.tau)
-
-        z_mu, z_lv = self._encode(x, y, is_training=False)
-        # y_logit = self._classify(x, is_training=False)
-        return dict(mu=z_mu, log_var=z_lv, y=y) #, y_logit=y_logit)
-
-    def classify(self, x):
-        y_logit = self._classify(x, is_training=False)
-        y = tf.nn.softmax(y_logit / self.tau)
-        return y
-
-    def decode(self, z, y, tanh=False):
-        # if tanh:
-        #     return self._generate(z, y, is_training=False)
-        # else:
-        #     return self._generate(z, y, is_training=False)
-        xh, _ = self._generate(z, y, is_training=False)
-        # tf.summary.image('xh', tf.transpose(xh, [2, 1, 0, 3]))
-        # return self._filter(xh, is_training=False)
-        return xh
-
-    # def classify(self, x):
-    #     return self._classify(tf.nn.softmax(x), is_training=False)
-
-    # def interpolate(self, x1, x2, n):
-    #     ''' Interpolation from the latent space '''
-    #     x1 = tf.expand_dims(x1, 0)
-    #     x2 = tf.expand_dims(x2, 0)
-    #     z1, _ = self._encode(x1, is_training=False)
-    #     z2, _ = self._encode(x2, is_training=False)
-    #     a = tf.reshape(tf.linspace(0., 1., n), [n, 1])
-
-    #     z1 = tf.matmul(1. - a, z1)
-    #     z2 = tf.matmul(a, z2)
-    #     z = tf.nn.tanh(tf.add(z1, z2))  # Gaussian-to-Uniform
-    #     xh = self._generate(z, is_training=False)
-    #     xh = tf.concat(0, [x1, xh, x2])
-    #     return xh
