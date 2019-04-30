@@ -1,6 +1,8 @@
-import pdb
-from tensorflow.contrib import slim
 import tensorflow as tf
+import math
+
+from tensorflow.contrib import slim
+
 from util.layer import GaussianLogDensity, GaussianKLD, \
     GaussianSampleLayer, lrelu, GumbelSampleLayer, GumbelSoftmaxLogDensity
 
@@ -33,10 +35,18 @@ class CVAE(object):
         self._encode = tf.make_template(
             'Encoder',
             self._encoder)
-        self._classify = tf.make_template(
-            'Classifier',
-            self._classifier)
+        self._classification_weight = tf.make_template(
+            'Classifier', self._classifier_weight)
+        self._classify_with_weight = tf.make_template(
+            'Classifier', self._classifier_with_weight)
+        self._classify_inner = tf.make_template(
+            'Classifier', self._classifier)
 
+    def _classify(self, x, is_training=False, weight=None):
+        if weight is None:
+            weight = self._classification_weight()
+        return self._classify_with_weight(x, is_training, weight)
+        #return self._classify_inner(x, is_training=is_training)
 
     def _sanity_check(self):
         for net in ['encoder', 'generator', 'classifier']:
@@ -79,6 +89,57 @@ class CVAE(object):
                 shape=[n_class, h_dim],
                 regularizer=slim.l2_regularizer(1e-6))
         return embeddings
+
+    def _classifier_weight(self):
+        n_layer = len(self.arch['classifier']['output'])
+        subnet = self.arch['classifier']
+
+        weight = {}
+        h, w, input_channel = self.arch['hwc']
+        for i in range(n_layer):
+            kh, kw = subnet['kernel'][i]
+            ic, oc = input_channel, subnet['output'][i]
+            weight['Conv_{}/weights'.format(i)] = tf.get_variable(
+                name='Conv_{}/weights'.format(i),
+                shape=[kh, kw, ic, oc], dtype=tf.float32,
+                initializer=tf.contrib.layers.xavier_initializer(),
+                regularizer=slim.l2_regularizer(subnet['l2-reg']),
+            )
+            sh, sw = subnet['stride'][i]
+            h = math.ceil(float(h) / sh)
+            w = math.ceil(float(w) / sw)
+            input_channel = oc
+
+        weight['fully_connected/weights'] = tf.get_variable(
+            name='fully_connected/weights',
+            shape=[h * w * input_channel, self.arch['y_dim']], dtype=tf.float32,
+            initializer=tf.contrib.layers.xavier_initializer(),
+            regularizer=slim.l2_regularizer(subnet['l2-reg'])
+        )
+        weight['fully_connected/biases'] = tf.get_variable(
+            name='fully_connected/biases',
+            shape=[self.arch['y_dim']], dtype=tf.float32,
+            initializer=tf.initializers.zeros(),
+            regularizer=slim.l2_regularizer(subnet['l2-reg'])
+        )
+        return weight
+
+    def _classifier_with_weight(self, x, is_training, weight):
+        n_layer = len(self.arch['classifier']['output'])
+        subnet = self.arch['classifier']
+
+        for i in range(n_layer):
+            x = tf.nn.conv2d(
+                x, weight['Conv_{}/weights'.format(i)],
+                strides=[1] + subnet['stride'][i] + [1], padding='SAME')
+            x = tf.layers.batch_normalization(x, scale=True)
+            x = tf.nn.leaky_relu(x)
+
+        x = slim.flatten(x)
+        y_logit = tf.matmul(x, weight['fully_connected/weights'])
+        y_logit = y_logit + weight['fully_connected/biases']
+        return y_logit
+
 
     def _classifier(self, x, is_training):
         n_layer = len(self.arch['classifier']['output'])
@@ -387,6 +448,8 @@ class CVAE(object):
                             logits=slim.flatten(labeled['xh_sig_logit']),
                             labels=slim.flatten(x_l)),
                         1))
+
+                # logit grad regularize
                 unlabeled_recon_grad = tf.gradients(
                     unlabeled_recon_loss, labeled['y_logit_pred'])
                 meta_update_lr = self.arch['training']['meta_inner_update_lr']
@@ -449,6 +512,26 @@ class CVAE(object):
                 # # [TODO] How to define this term? log p(y)
                 # loss['log p(y)'] = - tf.nn.softmax_cross_entropy_with_logits(
                 loss['log p(y)'] = 0.0
+
+            with tf.name_scope('Meta'):
+                meta_update_lr = self.arch['training']['meta_inner_update_lr']
+                unsup_obj = loss['KL(z_l)'] + loss['log p(x_l)'] + \
+                    loss['KL(z_u)'] + loss['log p(x_u)'] - loss['H(y)']
+                weights = self._classification_weight()
+                unsup_grads = tf.gradients(unsup_obj, list(weights.values()))
+                unsup_grads = {k: v for k, v in zip(weights.keys(), unsup_grads)}
+                fast_weights = {}
+                for k, v in weights.items():
+                    unsup_grad = unsup_grads[k]
+                    # It is almost impossible to use hessian in this impl.
+                    if self.arch['training']['meta_weight_no_hessian']:
+                        unsup_grad = tf.stop_gradient(unsup_grad)
+                    fast_weights[k] = weights[k] - meta_update_lr * unsup_grad
+                fast_y_logit_pred = self._classify_with_weight(
+                    x_l, is_training=self.is_training, weight=fast_weights)
+                loss['meta_weight_labeled'] = tf.reduce_mean(
+                    tf.nn.softmax_cross_entropy_with_logits(
+                        logits=fast_y_logit_pred, labels=y_l))
 
             loss['KL(z)'] = loss['KL(z_l)'] + loss['KL(z_u)']
             loss['Dis'] = loss['log p(x_l)'] + loss['log p(x_u)']
