@@ -1,14 +1,14 @@
 import os
 import json
-# import pdb
-# from tqdm import tqdm
+import importlib
 
-from sklearn import metrics
 import tensorflow as tf
 import numpy as np
 import matplotlib as mpl
 mpl.use('Agg')
 import matplotlib.pyplot as plt
+
+from sklearn import metrics
 
 from model.cvae import CVAE
 from util.wrapper import save
@@ -235,7 +235,10 @@ def main():
     X_l = tf.constant(x_s)
     Y_l = tf.one_hot(y_s, arch['y_dim'])
 
-    net = CVAE(arch)
+    print('module: {}, class: {}'.format(
+        arch['model']['module'], arch['model']['class']))
+    module = importlib.import_module(arch['model']['module'])
+    net = eval('module.{}(arch)'.format(arch['model']['class']))
     loss = net.loss(X_u, X_l, Y_l)
 
     encodings = net.encode(X_u)

@@ -2,6 +2,10 @@
 	"hwc": [28, 28, 1],
 	"z_dim": 32,
 	"y_dim": 10,
+    "model": {
+        "module": "model.cvae_paper",
+        "class": "CVAE"
+    },
 	"encoder": {
 		"kernel": [[5, 5], [5, 5], [5, 5]],
 		"stride": [[2, 2], [2, 2], [2, 2]],
