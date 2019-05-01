@@ -9,22 +9,19 @@
 	"encoder": {
 		"kernel": [[5, 5], [5, 5], [5, 5]],
 		"stride": [[2, 2], [2, 2], [2, 2]],
-		"output": [32, 64, 128],
-		"l2-reg": 1e-6
+		"output": [32, 64, 128]
 	},
 	"classifier": {
 		"kernel": [[5, 5], [5, 5], [5, 5]],
 		"stride": [[2, 2], [2, 2], [2, 2]],
-		"output": [32, 64, 128],
-		"l2-reg": 1e-6
+		"output": [32, 64, 128]
 	},
 	"generator": {
-		"hwc": [7, 7, 4],
-		"merge_dim": 200,
-		"kernel": [[5, 5], [5, 5], [11, 11]],
-		"stride": [[2, 2], [2, 2], [1, 1]],
-		"output": [128, 64, 1],
-		"l2-reg": 1e-6
+        "hidden_dim": 64,
+		"kernel": [[3, 3], [3, 3], [3, 3], [3, 3], [1, 1]],
+		"stride": [[2, 2], [2, 2], [2, 2], [2, 2], [1, 1]],
+        "padding": ["valid", "valid", "same", "same", "same"],
+		"output": [128, 64, 32, 32, 1]
 	},
 	"training": {
 		"epoch": 301,
@@ -33,10 +30,10 @@
 		"halflife": 10,
 		"largest_tau": 1.0,
 		"smallest_tau": 0.5,
-		"alpha": 100.0,
+		"alpha": 1.0,
 		"summary_freq": 1,
 		"batch_size": 100,
-		"smp_per_class": 2,
+		"smp_per_class": 10,
 		"num_unlabeled": 50000,
         "meta_inner_update_lr": 1e-4,
         "meta_outer_update_alpha": 100,

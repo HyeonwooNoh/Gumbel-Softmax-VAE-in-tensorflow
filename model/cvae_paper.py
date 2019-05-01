@@ -1,6 +1,7 @@
 import tensorflow as tf
 import math
 
+from tensorflow import keras
 from tensorflow.contrib import slim
 
 from util.layer import GaussianKLD, GaussianSampleLayer, lrelu, GumbelSampleLayer
@@ -18,16 +19,17 @@ class CVAE(object):
         self._sanity_check()
         self.is_training = is_training
 
+        self._encoder_layers = {}
+        self._generator_layers = {}
+
         with tf.variable_scope('Tau'):
             self.tau = tf.nn.relu(
                 10. * tf.Variable(
                     tf.ones([1]),
                     name='tau')) + 0.1
 
-        self._generate = tf.make_template(
-            'Generator', self._generator)
-        self._encode = tf.make_template(
-            'Encoder', self._encoder)
+        #self._generate = tf.make_template(
+        #    'Generator', self._generator)
         self._classification_weight = tf.make_template(
             'Classifier', self._classifier_weight)
         self._classify_with_weight = tf.make_template(
@@ -44,21 +46,6 @@ class CVAE(object):
             assert len(self.arch[net]['output']) == len(self.arch[net]['kernel'])
             assert len(self.arch[net]['output']) == len(self.arch[net]['stride'])
 
-    def _merge(self, var_list, fan_out, l2_reg=1e-6):
-        '''
-        Note: Don't apply BN on this because 'y'
-              tends to be the same inside a batch.
-        '''
-        x = 0.
-        with slim.arg_scope([slim.fully_connected],
-                            num_outputs=fan_out,
-                            weights_regularizer=slim.l2_regularizer(l2_reg),
-                            normalizer_fn=None, activation_fn=None):
-            for var in var_list:
-                x = x + slim.fully_connected(var)
-        x = slim.bias_add(x)
-        return x
-
     def _classifier_weight(self):
         n_layer = len(self.arch['classifier']['output'])
         subnet = self.arch['classifier']
@@ -72,8 +59,13 @@ class CVAE(object):
                 name='Conv_{}/weights'.format(i),
                 shape=[kh, kw, ic, oc], dtype=tf.float32,
                 initializer=tf.contrib.layers.xavier_initializer(),
-                regularizer=slim.l2_regularizer(subnet['l2-reg']),
             )
+            weight['Conv_{}/biases'.format(i)] = tf.get_variable(
+                name='Conv_{}/biases'.format(i),
+                shape=[1, 1, 1, oc], dtype=tf.float32,
+                initializer=tf.initializers.zeros()
+            )
+
             sh, sw = subnet['stride'][i]
             h = math.ceil(float(h) / sh)
             w = math.ceil(float(w) / sw)
@@ -83,122 +75,112 @@ class CVAE(object):
             name='fully_connected/weights',
             shape=[h * w * input_channel, self.arch['y_dim']], dtype=tf.float32,
             initializer=tf.contrib.layers.xavier_initializer(),
-            regularizer=slim.l2_regularizer(subnet['l2-reg'])
         )
         weight['fully_connected/biases'] = tf.get_variable(
             name='fully_connected/biases',
             shape=[self.arch['y_dim']], dtype=tf.float32,
             initializer=tf.initializers.zeros(),
-            regularizer=slim.l2_regularizer(subnet['l2-reg'])
         )
         return weight
 
     def _classifier_with_weight(self, x, is_training, weight):
         n_layer = len(self.arch['classifier']['output'])
         subnet = self.arch['classifier']
-
         for i in range(n_layer):
             x = tf.nn.conv2d(
                 x, weight['Conv_{}/weights'.format(i)],
                 strides=[1] + subnet['stride'][i] + [1], padding='SAME')
-            x = tf.layers.batch_normalization(x, scale=True)
-            x = tf.nn.leaky_relu(x)
+            x = x + weight['Conv_{}/biases'.format(i)]
+            x = tf.nn.relu(x)
 
         x = slim.flatten(x)
         y_logit = tf.matmul(x, weight['fully_connected/weights'])
         y_logit = y_logit + weight['fully_connected/biases']
         return y_logit
 
-    def _encoder(self, x, y, is_training):
+    def _encode(self, x, y, is_training):
+        with tf.variable_scope('Encoder'):
+            return self._encoder_network(x, y, is_training)
+
+    def _encoder_network(self, x, y, is_training):
         n_layer = len(self.arch['encoder']['output'])
         subnet = self.arch['encoder']
         h, w, c = self.arch['hwc']
 
         with tf.variable_scope('y_guider'):
-            y2x = slim.fully_connected(
-                y,
-                h * w * c,
-                weights_regularizer=slim.l2_regularizer(subnet['l2-reg']),
-                # normalizer_fn=None,
-                activation_fn=tf.nn.sigmoid)
-            y2x = tf.reshape(y2x, [-1, h, w, c])
+            self._encoder_layers['Dense_y2x'] = self._encoder_layers.get(
+                'Dense_y2x', keras.layers.Dense(
+                    subnet['output'][0], use_bias=False, name='Dense_y2x')
+            )
+            y2x = self._encoder_layers['Dense_y2x'](y)
+            y2x = tf.expand_dims(y2x, 1)
+            y2x = tf.expand_dims(y2x, 1)  # [b, 1, 1, subnet['output'][0]]
 
-        x = tf.concat([x, y2x], 3)
+        for i in range(n_layer):
+            self._encoder_layers['Conv_{}'.format(i)] = self._encoder_layers.get(
+                'Conv_{}'.format(i),
+                keras.layers.Conv2D(
+                    filters=subnet['output'][i], kernel_size=subnet['kernel'][i],
+                    strides=subnet['stride'][i], padding='same',
+                    activation=None, use_bias=True, name='Conv_{}'.format(i))
+            )
+            x = self._encoder_layers['Conv_{}'.format(i)](x)
+            if i == 0:
+                x = x + y2x
+            x = keras.activations.relu(x)
 
-        with slim.arg_scope([slim.batch_norm], scale=True, scope='BN',
-                            updates_collections=None, is_training=is_training):
-            with slim.arg_scope([slim.conv2d],
-                                weights_regularizer=slim.l2_regularizer(subnet['l2-reg']),
-                                normalizer_fn=slim.batch_norm,
-                                activation_fn=lrelu):
-                for i in range(n_layer):
-                    x = slim.conv2d(
-                        x,
-                        subnet['output'][i],
-                        subnet['kernel'][i],
-                        subnet['stride'][i])
-                    tf.summary.image(
-                        'down-sample{:d}'.format(i),
-                        tf.transpose(x[:, :, :, 0:3], [2, 1, 0, 3]))
+        x = keras.layers.Flatten()(x)
 
-        x = slim.flatten(x)
+        self._encoder_layers['Dense_z_mu'] = self._encoder_layers.get(
+            'Dense_z_mu',
+            keras.layers.Dense(self.arch['z_dim'], name='Dense_z_mu')
+        )
+        z_mu = self._encoder_layers['Dense_z_mu'](x)
+        self._encoder_layers['Dense_z_lv'] = self._encoder_layers.get(
+            'Dense_z_lv',
+            keras.layers.Dense(self.arch['z_dim'], name='Dense_z_lv')
+        )
+        z_lv = self._encoder_layers['Dense_z_lv'](x)
 
-        with slim.arg_scope([slim.fully_connected],
-                            num_outputs=self.arch['z_dim'],
-                            weights_regularizer=slim.l2_regularizer(subnet['l2-reg']),
-                            normalizer_fn=None,
-                            activation_fn=None):
-            z_mu = slim.fully_connected(x)
-            z_lv = slim.fully_connected(x)
         return z_mu, z_lv
 
-    def _generator(self, z, y, is_training):
+    def _generate(self, z, y, is_training):
+        with tf.variable_scope('Generator'):
+            return self._generator_network(z, y, is_training)
+
+    def _generator_network(self, z, y, is_training):
         ''' In this version, we only generate the target, so `y` is useless '''
         subnet = self.arch['generator']
         n_layer = len(subnet['output'])
-        h, w, c = subnet['hwc']
 
         with tf.variable_scope('y_guider'):
-            x = self._merge([z, y], subnet['merge_dim'])
-            x = lrelu(x)
-        with slim.arg_scope([slim.batch_norm],
-                            scale=True, scope='BN',
-                            updates_collections=None,
-                            is_training=is_training):
-            x = slim.fully_connected(
-                x,
-                h * w * c,
-                normalizer_fn=slim.batch_norm,
-                activation_fn=lrelu)
+            self._generator_layers['Dense_y2h'] = self._generator_layers.get(
+                'Dense_y2h', keras.layers.Dense(
+                    subnet['hidden_dim'], use_bias=False, name='Dense_y2h')
+            )
+            y2h = self._generator_layers['Dense_y2h'](y)
 
-            x = tf.reshape(x, [-1, h, w, c])
+        self._generator_layers['Dense_z2h'] = self._generator_layers.get(
+            'Dense_z2h', keras.layers.Dense(
+                subnet['hidden_dim'], use_bias=True, name='Dense_z2h')
+        )
+        z2h = self._generator_layers['Dense_z2h'](z)
 
-            with slim.arg_scope([slim.conv2d_transpose],
-                                weights_regularizer=slim.l2_regularizer(subnet['l2-reg']),
-                                normalizer_fn=slim.batch_norm,
-                                activation_fn=lrelu):
-                for i in range(n_layer - 1):
-                    x = slim.conv2d_transpose(
-                        x,
-                        subnet['output'][i],
-                        subnet['kernel'][i],
-                        subnet['stride'][i]
-                        # normalizer_fn=None
-                        )
+        h = keras.activations.relu(y2h + z2h)
+        h = tf.expand_dims(h, axis=1)
+        h = tf.expand_dims(h, axis=1)  # [b, 1, 1, c]
+        for i in range(n_layer):
+            self._generator_layers['ConvT_{}'.format(i)] = self._generator_layers.get(
+                'ConvT_{}'.format(i), keras.layers.Conv2DTranspose(
+                    filters=subnet['output'][i], kernel_size=subnet['kernel'][i],
+                    strides=subnet['stride'][i], padding=subnet['padding'][i],
+                    activation=None, use_bias=True, name='ConvT_{}'.format(i))
+            )
+            h = self._generator_layers['ConvT_{}'.format(i)](h)
+            if i < n_layer - 1:
+                h = keras.activations.relu(h)
 
-                # Don't apply BN for the last layer of G
-                x = slim.conv2d_transpose(
-                    x,
-                    subnet['output'][-1],
-                    subnet['kernel'][-1],
-                    subnet['stride'][-1],
-                    normalizer_fn=None,
-                    activation_fn=None)
-
-                # pdb.set_trace()
-                logit = x
-                # x = tf.nn.tanh(logit)
-        # return x, logit
+        logit = h
         return tf.nn.sigmoid(logit), logit
 
     def circuit_loop(self, x, y_L=None):

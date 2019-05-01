@@ -235,7 +235,7 @@ def main():
     X_l = tf.constant(x_s)
     Y_l = tf.one_hot(y_s, arch['y_dim'])
 
-    print('module: {}, class: {}'.format(
+    print('\nmodule: {}, class: {}\n'.format(
         arch['model']['module'], arch['model']['class']))
     module = importlib.import_module(arch['model']['module'])
     net = eval('module.{}(arch)'.format(arch['model']['class']))
