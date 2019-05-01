@@ -17,6 +17,7 @@ args = tf.app.flags.FLAGS
 tf.app.flags.DEFINE_string('logdir', 'tmp', 'log dir')
 tf.app.flags.DEFINE_string('datadir', 'dataset', 'dir to dataset')
 tf.app.flags.DEFINE_string('gpu_cfg', None, 'GPU config file')
+tf.app.flags.DEFINE_string('config', 'configs/cvae_paper.json', 'Config file')
 
 
 class MNISTLoader(object):
@@ -209,9 +210,9 @@ def main():
     if not os.path.exists(args.logdir):
         os.makedirs(args.logdir)
 
-    with open('architecture.json') as f:
+    with open(args.config) as f:
         arch = json.load(f)
-        print('\narchitecture.json is loaded\n')
+        print('\n{} is loaded\n'.format(args.config))
         json.dump(arch, open('{}/arch.json'.format(args.logdir), 'w'))
 
     dataset = MNISTLoader(args.datadir)
