@@ -110,11 +110,13 @@ class CVAE(object):
         with tf.variable_scope('y_guider'):
             self._encoder_layers['Dense_y2x'] = self._encoder_layers.get(
                 'Dense_y2x', keras.layers.Dense(
-                    subnet['output'][0], use_bias=False, name='Dense_y2x')
+                    h * w * c, use_bias=False,
+                    activation=keras.activations.sigmoid, name='Dense_y2x')
             )
             y2x = self._encoder_layers['Dense_y2x'](y)
-            y2x = tf.expand_dims(y2x, 1)
-            y2x = tf.expand_dims(y2x, 1)  # [b, 1, 1, subnet['output'][0]]
+            y2x = tf.reshape(y2x, [-1, h, w, c])
+
+        x = tf.concat([x, y2x], 3)
 
         for i in range(n_layer):
             self._encoder_layers['Conv_{}'.format(i)] = self._encoder_layers.get(
@@ -125,8 +127,6 @@ class CVAE(object):
                     activation=None, use_bias=True, name='Conv_{}'.format(i))
             )
             x = self._encoder_layers['Conv_{}'.format(i)](x)
-            if i == 0:
-                x = x + y2x
             x = keras.activations.relu(x)
 
         x = keras.layers.Flatten()(x)
