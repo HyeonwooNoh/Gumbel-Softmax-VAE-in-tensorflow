@@ -132,7 +132,7 @@ def get_optimization_ops(loss, arch):
     )
 
     # Unlabeled loss optimization
-    if arch['training']['fix_y_guider_for_unlabeled']:
+    if arch['training'].get('fix_y_guider_for_unlabeled', False):
         trainables_not_y_guider = [v for v in trainables if 'y_guider' not in v.name]
     else:
         trainables_not_y_guider = trainables
@@ -141,14 +141,14 @@ def get_optimization_ops(loss, arch):
     )
 
     # Meta loss optimization (logit level)
-    if arch['training']['use_meta_gradient']:
+    if arch['training'].get('use_meta_gradient', False):
         meta_obj = loss['GradReg'] * arch['training']['meta_outer_update_alpha']
         optimize_list.append(
             optimizer_g.minimize(meta_obj, var_list=generator_vars + encoder_vars)
         )
 
     # Meta weight loss optimization
-    if arch['training']['use_meta_weight_gradient']:
+    if arch['training'].get('use_meta_weight_gradient', False):
         meta_weight_obj = loss['meta_weight_labeled'] * arch['training']['meta_outer_update_alpha']
         optimize_list.append(
             optimizer_g.minimize(meta_weight_obj, var_list=trainables)
