@@ -116,7 +116,6 @@ class CVAE(object):
             y2x = tf.reshape(y2x, [-1, h, w, c])
 
         x = tf.concat([x, y2x], 3)
-
         for i in range(n_layer):
             self._encoder_layers['Conv_{}'.format(i)] = self._encoder_layers.get(
                 'Conv_{}'.format(i),

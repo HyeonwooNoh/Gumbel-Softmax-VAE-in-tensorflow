@@ -29,11 +29,13 @@ def get_optimization_ops(loss, arch):
 
     a = arch['training']['alpha']
 
-    labeled_obj = loss['KL(z_l)'] + loss['log p(x_l)']
-    if arch['training']['use_supervised_loss']:
+    labeled_obj = 0
+    if arch['training'].get('use_supervised_loss'):
         labeled_obj += a * loss['Labeled']  # + a * loss['H(y)']
+    if arch['training'].get('use_unsupervised_loss', True):
+        labeled_obj += loss['KL(z_l)'] + loss['log p(x_l)']
+
     unlabeled_obj = loss['KL(z_u)'] + loss['log p(x_u)'] - loss['H(y)']
-    obj_Ez = labeled_obj + unlabeled_obj
 
     optimize_list = []
 
@@ -54,9 +56,10 @@ def get_optimization_ops(loss, arch):
         trainables_not_y_guider = [v for v in trainables if 'y_guider' not in v.name]
     else:
         trainables_not_y_guider = trainables
-    optimize_list.append(
-        optimizer_g.minimize(unlabeled_obj, var_list=trainables_not_y_guider)
-    )
+    if arch['training'].get('use_unsupervised_loss', True):
+        optimize_list.append(
+            optimizer_g.minimize(unlabeled_obj, var_list=trainables_not_y_guider)
+        )
 
     # Meta loss optimization (logit level)
     if arch['training'].get('use_meta_gradient', False):
