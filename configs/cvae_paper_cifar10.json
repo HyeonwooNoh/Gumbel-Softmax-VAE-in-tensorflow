@@ -1,0 +1,48 @@
+{
+    "image_pixel_type": "continuous[-1,1]",
+    "dataset": "cifar10",
+	"hwc": [32, 32, 3],
+	"z_dim": 64,
+	"y_dim": 10,
+    "model": {
+        "module": "model.cvae_paper",
+        "class": "CVAE"
+    },
+	"encoder": {
+		"kernel": [[5, 5], [5, 5], [5, 5]],
+		"stride": [[2, 2], [2, 2], [2, 2]],
+		"output": [32, 64, 128]
+	},
+	"classifier": {
+		"kernel": [[5, 5], [5, 5], [5, 5]],
+		"stride": [[2, 2], [2, 2], [2, 2]],
+		"output": [32, 64, 128]
+	},
+	"generator": {
+        "hidden_dim": 64,
+		"kernel": [[3, 3], [3, 3], [3, 3], [3, 3], [3, 3], [1, 1]],
+		"stride": [[2, 2], [2, 2], [2, 2], [2, 2], [2, 2], [1, 1]],
+        "padding": ["same", "same", "same", "same", "same", "same"],
+		"output": [128, 64, 32, 32, 32, 3]
+	},
+	"training": {
+		"epoch": 301,
+		"lr": 1e-4,
+		"beta1": 0.5,
+		"halflife": 10,
+		"largest_tau": 1.0,
+		"smallest_tau": 0.5,
+		"alpha": 100.0,
+		"summary_freq": 1,
+		"batch_size": 100,
+		"smp_per_class": 400,
+		"num_unlabeled": 50000,
+        "meta_inner_update_lr": 1e-4,
+        "meta_outer_update_alpha": 100,
+        "use_supervised_loss": true,
+        "fix_y_guider_for_unlabeled": false,
+        "use_meta_gradient": false,
+        "use_meta_weight_gradient": false,
+        "meta_weight_no_hessian": true
+	}
+}

@@ -3,6 +3,7 @@ import json
 import importlib
 
 import tensorflow as tf
+import math
 import numpy as np
 import matplotlib as mpl
 mpl.use('Agg')
@@ -12,96 +13,13 @@ from sklearn import metrics
 
 from model.cvae import CVAE
 from util.wrapper import save
+from util.datasets import MNISTLoader, CIFAR10Loader
 
 args = tf.app.flags.FLAGS
 tf.app.flags.DEFINE_string('logdir', 'tmp', 'log dir')
 tf.app.flags.DEFINE_string('datadir', 'dataset', 'dir to dataset')
 tf.app.flags.DEFINE_string('gpu_cfg', None, 'GPU config file')
 tf.app.flags.DEFINE_string('config', 'configs/cvae_paper.json', 'Config file')
-
-
-class MNISTLoader(object):
-    '''
-    I assume that 'download' and 'unzip' was done outside
-
-    Training set: 60k
-    Test set: 10k
-
-    Subscript:
-        u: unlabeled
-        l: labeled
-        t: test
-    '''
-    def __init__(self, path):
-        self.x_l = self.load_images(
-            filename=os.path.join(path, 'train-images-idx3-ubyte'),
-            N=60000)
-        self.y_l = self.load_labels(
-            filename=os.path.join(path, 'train-labels-idx1-ubyte'),
-            N=60000)
-        self.x_t = self.load_images(
-            filename=os.path.join(path, 't10k-images-idx3-ubyte'),
-            N=10000)
-        self.y_t = self.load_labels(
-            filename=os.path.join(path, 't10k-labels-idx1-ubyte'),
-            N=10000)
-        self.x_u = None
-        self.y_u = None  # [TODO] actually shouldn't exist
-
-    def load_images(self, filename, N):
-        '''
-        Load MNIST from the downloaded and unzipped file
-        into [N, 28, 28, 1] dimensions with [0, 1] values
-        '''
-        with open(filename) as f:
-            x = np.fromfile(file=f, dtype=np.uint8)
-        x = x[16:].reshape([N, 28, 28, 1]).astype(np.float32)
-        x = x / 255.
-        return x
-
-    def load_labels(self, filename, N):
-        ''' `int` '''
-        with open(filename) as f:
-            x = np.fromfile(file=f, dtype=np.uint8)
-        x = x[8:].reshape([N]).astype(np.int32)
-        return x
-
-    # ==== Ad-hoc: the following are for SSL only ====
-    def divide_semisupervised(self, N_u):
-        '''
-        Shuffle before splitting
-        '''
-        idx = np.arange(self.y_l.shape[0])
-        self.x_l = self.x_l[idx]
-        self.y_l = self.y_l[idx]
-
-        self.x_u = self.x_l[:N_u]
-        self.y_u = self.y_l[:N_u]
-
-        self.x_l = self.x_l[N_u:]
-        self.y_l = self.y_l[N_u:]
-
-
-    def pick_supervised_samples(self, smp_per_class=10):
-        ''' [TODO] improve it '''
-        idx = np.arange(self.y_l.shape[0])
-        rng_state = np.random.RandomState(seed=123)
-        rng_state.shuffle(idx)
-        x = self.x_l[idx]
-        y = self.y_l[idx]
-        index = list()
-        for i in range(10):
-            count = 0
-            index_ = list()
-            for j in range(y.shape[0]):
-                if y[j] == i and count < smp_per_class:
-                    index_.append(j)
-                    count += 1
-            index = index + index_
-        # x_s = x[index]
-        # y_s = y[index]
-        return x[index], y[index]
-    # =======================================
 
 
 def get_optimization_ops(loss, arch):
@@ -162,11 +80,12 @@ def halflife(t, N0=1., T_half=1., thresh=0.0):
     return np.asarray(Nt).reshape([1,])
 
 
-def reshape(b, h, w=None):
-    if w is None: w = h
-    b = np.reshape(b, [h, w, 28, 28])
-    b = np.transpose(b, [0, 2, 1, 3])
-    b = np.reshape(b, [h*28, w*28])
+def reshape(b, nrow, ncol=None, arch=None):
+    h, w, c = arch['hwc']
+    if ncol is None: ncol = nrow
+    b = np.reshape(b, [nrow, ncol, h, w, c])
+    b = np.transpose(b, [0, 2, 1, 3, 4])
+    b = np.reshape(b, [nrow*h, ncol*w, c])
     return b
 
 
@@ -185,16 +104,26 @@ def make_thumbnail(y, z, arch, net):
         xh = net.decode(z, y)  # 100, 28, 28, 1
         xh = tf.reshape(xh, [k, k, h, w, c])
         xh = tf.transpose(xh, [0, 2, 1, 3, 4])
-        xh = tf.reshape(xh[:, :, :, :, 0], [k*h, k*w])
+        xh = tf.reshape(xh[:, :, :, :, :], [k*h, k*w, c])
     return xh
 
 
-def imshow(img_list, filename, titles=None):
+def imshow(img_list, filename, titles=None, image_pixel_type='binary'):
     n = len(img_list)
     plt.figure(figsize=(10*n, 10))
     for i in range(n):
         plt.subplot(1, n, i + 1)
-        plt.imshow(img_list[i], cmap='gray')
+        if image_pixel_type == 'binary':
+            vis_img = img_list[i]
+        elif image_pixel_type == 'continuous[-1,1]':
+            vis_img = (img_list[i] + 1.0) / 2.0
+        else:
+            raise ValueError('Unknown image_pixel_type')
+
+        if img_list[i].shape[2] == 1:
+            plt.imshow(np.squeeze(vis_img, 2), cmap='gray')
+        else:
+            plt.imshow(vis_img)
         plt.axis('off')
         if titles is not None:
             plt.title(titles[i])
@@ -215,26 +144,42 @@ def main():
         print('\n{} is loaded\n'.format(args.config))
         json.dump(arch, open('{}/arch.json'.format(args.logdir), 'w'))
 
-    dataset = MNISTLoader(args.datadir)
+    if arch['dataset'] == 'mnist':
+        dataset = MNISTLoader(args.datadir)
+    elif arch['dataset'] == 'cifar10':
+        dataset = CIFAR10Loader(args.datadir)
+    else:
+        raise ValueError('Unknown dataset')
+
     dataset.divide_semisupervised(N_u=arch['training']['num_unlabeled'])
     x_s, y_s = dataset.pick_supervised_samples(
         smp_per_class=arch['training']['smp_per_class'])
     x_u = dataset.x_u
     x_t, y_t = dataset.x_t, dataset.y_t
     x_1, _ = dataset.pick_supervised_samples(smp_per_class=1)
-    x_l_show = reshape(x_s, 10, arch['training']['smp_per_class'])
-    imshow([x_l_show], os.path.join(args.logdir, 'x_labeled.png'))
+    x_l_show = reshape(x_s, 10, arch['training']['smp_per_class'], arch=arch)
+    imshow([x_l_show], os.path.join(args.logdir, 'x_labeled.png'),
+           image_pixel_type=arch['image_pixel_type'])
 
     batch_size = arch['training']['batch_size']
     N_EPOCH = arch['training']['epoch']
     N_ITER = x_u.shape[0] // batch_size
     N_HALFLIFE = arch['training']['halflife']
 
+    num_tile = math.ceil(float(x_u.shape[0]) / x_s.shape[0])
+    x_s = np.tile(x_s, [num_tile, 1, 1, 1])
+    y_s = np.tile(y_s, [num_tile])
+    l_index = np.arange(x_s.shape[0])
+    rng_state = np.random.RandomState(seed=123)
+    rng_state.shuffle(l_index)
+    x_s = x_s[l_index]
+    y_s = y_s[l_index].astype(np.int32)
 
     h, w, c = arch['hwc']
     X_u = tf.placeholder(shape=[None, h, w, c], dtype=tf.float32)
-    X_l = tf.constant(x_s)
-    Y_l = tf.one_hot(y_s, arch['y_dim'])
+    X_l = tf.placeholder(shape=[None, h, w, c], dtype=tf.float32)
+    Y_l_ph = tf.placeholder(shape=[None], dtype=tf.int32)
+    Y_l = tf.one_hot(Y_l_ph, arch['y_dim'])
 
     print('\nmodule: {}, class: {}\n'.format(
         arch['model']['module'], arch['model']['class']))
@@ -314,12 +259,21 @@ def main():
                     T_half=N_ITER*N_HALFLIFE,
                     thresh=arch['training']['smallest_tau'])
 
-                batch = np.random.binomial(1, x_u[idx])
+                if arch['image_pixel_type'] == 'binary':
+                    batch = np.random.binomial(1, x_u[idx])
+                elif arch['image_pixel_type'] == 'continuous[-1,1]':
+                    batch = x_u[idx]
+                else:
+                    raise ValueError('Unknown image_pixel_type')
+
+                x_l_batch = x_s[idx]
+                y_l_batch = y_s[idx]
 
                 operations = [loss['Dis'], loss['KL(z)'], loss['H(y)'], loss['Labeled']]
 
                 outputs = sess.run(
-                    operations + optimize_list, {X_u: batch, net.tau: tau})
+                    operations + optimize_list,
+                    {X_u: batch, X_l: x_l_batch, Y_l_ph: y_l_batch, net.tau: tau})
                 l_x, l_z, l_y, l_l = outputs[:4]
 
                 msg = 'Ep [{:03d}/{:d}]-It[{:03d}/{:d}]: Lx: {:6.2f}, KL(z): {:4.2f}, L:{:.2e}: H(u): {:.2e}'.format(
@@ -331,13 +285,12 @@ def main():
                     #     [X_u, Y_u, Xh, Xh2, summary_op],  # TODO
                     b, y, xh, xh2, train_summary = sess.run(
                         [X_u, Y_u, Xh, Xh2, train_summary_op],
-                        {X_u: batch,
+                        {X_u: batch, X_l: x_l_batch, Y_l_ph: y_l_batch,
                          net.tau: tau})
                     writer.add_summary(train_summary, step)
-
-                    b = reshape(b, sqrt_bz)
-                    xh = reshape(xh, sqrt_bz)
-                    xh2 = reshape(xh2, sqrt_bz)
+                    b = reshape(b, sqrt_bz, arch=arch)
+                    xh = reshape(xh, sqrt_bz, arch=arch)
+                    xh2 = reshape(xh2, sqrt_bz, arch=arch)
 
                     y = np.argmax(y, 1).astype(np.int32)
                     y = np.reshape(y, [sqrt_bz, sqrt_bz])
@@ -353,13 +306,13 @@ def main():
                                 f.write('{:d} '.format(y[i, j]))
                             f.write('\n')
                         f.write('\n\n')
-
                     imshow(
                         img_list=[b, xh, xh2],
                         filename=png,
                         titles=['Ground-truth',
                                 'Reconstructed using dense label',
-                                'Reconstructed using onehot label'])
+                                'Reconstructed using onehot label'],
+                        image_pixel_type=arch['image_pixel_type'])
 
                     # writer.add_summary(summary, step)  # TODO
 
@@ -383,12 +336,12 @@ def main():
                     x_converted = sess.run(
                         thumbnail,
                         {X_u: x_1, Y_u: np.eye(arch['y_dim'])})
-
                     imshow(
                         img_list=[x_converted],
                         filename=os.path.join(
                             args.logdir,
-                            'Ep-{:03d}-conv.png'.format(ep)))
+                            'Ep-{:03d}-conv.png'.format(ep)),
+                        image_pixel_type=arch['image_pixel_type'])
 
                     # == Confusion Matrix ==
                     with open(logfile, 'a') as f:

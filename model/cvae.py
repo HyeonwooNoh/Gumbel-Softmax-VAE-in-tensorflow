@@ -430,24 +430,16 @@ class CVAE(object):
                         z_mu, z_lv,
                         tf.zeros_like(z_mu), tf.zeros_like(z_lv)))
 
-                loss['log p(x_l)'] = tf.reduce_mean(
-                    tf.reduce_sum(
-                        tf.nn.sigmoid_cross_entropy_with_logits(
-                            logits=slim.flatten(labeled['xh_sig_logit_L']),
-                            labels=slim.flatten(x_l)),
-                        1))
+                loss['log p(x_l)'] = self._reconstruction_loss(
+                    labeled['xh_sig_logit_L'], x_l)
 
                 loss['Labeled'] = tf.reduce_mean(
                     tf.nn.softmax_cross_entropy_with_logits(
                         logits=labeled['y_logit_pred'],
                         labels=y_l))
 
-                unlabeled_recon_loss = tf.reduce_mean(
-                    tf.reduce_sum(
-                        tf.nn.sigmoid_cross_entropy_with_logits(
-                            logits=slim.flatten(labeled['xh_sig_logit']),
-                            labels=slim.flatten(x_l)),
-                        1))
+                unlabeled_recon_loss = self._reconstruction_loss(
+                    labeled['xh_sig_logit'], slim.flatten(x_l))
 
                 # logit grad regularize
                 unlabeled_recon_grad = tf.gradients(
@@ -467,12 +459,8 @@ class CVAE(object):
                         z_mu, z_lv,
                         tf.zeros_like(z_mu), tf.zeros_like(z_lv)))
 
-                loss['log p(x_u)'] = tf.reduce_mean(
-                    tf.reduce_sum(
-                        tf.nn.sigmoid_cross_entropy_with_logits(
-                            logits=slim.flatten(unlabel['xh_sig_logit']),
-                            labels=slim.flatten(x_u)),
-                        1))
+                loss['log p(x_u)'] = self._reconstruction_loss(
+                    unlabel['xh_sig_logit'], x_u)
 
                 y_prior = tf.ones_like(unlabel['y_sample']) / self.arch['y_dim']
 
