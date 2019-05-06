@@ -47,29 +47,44 @@ class CVAE(object):
             assert len(self.arch[net]['output']) == len(self.arch[net]['stride'])
 
     def _classifier_weight(self):
-        n_layer = len(self.arch['classifier']['output'])
+        n_layer = len(self.arch['classifier']['layers'])
         subnet = self.arch['classifier']
+
+        def update_spatial(h, w, layer):
+            if layer['padding'] == 'valid':
+                h = h + 1 - layer['kernel'][0]
+                w = w + 1 - layer['kernel'][1]
+            sh, sw = layer['stride']
+            h = math.ceil(float(h) / sh)
+            w = math.ceil(float(w) / sw)
+            return h, w
+
 
         weight = {}
         h, w, input_channel = self.arch['hwc']
         for i in range(n_layer):
-            kh, kw = subnet['kernel'][i]
-            ic, oc = input_channel, subnet['output'][i]
-            weight['Conv_{}/weights'.format(i)] = tf.get_variable(
-                name='Conv_{}/weights'.format(i),
-                shape=[kh, kw, ic, oc], dtype=tf.float32,
-                initializer=tf.contrib.layers.xavier_initializer(),
-            )
-            weight['Conv_{}/biases'.format(i)] = tf.get_variable(
-                name='Conv_{}/biases'.format(i),
-                shape=[1, 1, 1, oc], dtype=tf.float32,
-                initializer=tf.initializers.zeros()
-            )
-
-            sh, sw = subnet['stride'][i]
-            h = math.ceil(float(h) / sh)
-            w = math.ceil(float(w) / sw)
-            input_channel = oc
+            layer = subnet['layers'][i]
+            if layer['type'] == 'conv':
+                kh, kw = layer['kernel']
+                ic, oc = input_channel, layer['output']
+                weight['{}/weights'.format(layer['name'])] = tf.get_variable(
+                    name='{}/weights'.format(layer['name']),
+                    shape=[kh, kw, ic, oc], dtype=tf.float32,
+                    initializer=tf.contrib.layers.xavier_initializer(),
+                )
+                weight['{}/biases'.format(layer['name'])] = tf.get_variable(
+                    name='{}/biases'.format(layer['name']),
+                    shape=[1, 1, 1, oc], dtype=tf.float32,
+                    initializer=tf.initializers.zeros()
+                )
+                h, w = update_spatial(h, w, layer)
+                input_channel = oc
+            elif layer['type'] == 'maxpool':
+                h, w = update_spatial(h, w, layer)
+            elif layer['type'] == 'avgpool':
+                h, w = update_spatial(h, w, layer)
+            else:
+                raise ValueError('Unknown layer type')
 
         weight['fully_connected/weights'] = tf.get_variable(
             name='fully_connected/weights',
@@ -84,14 +99,31 @@ class CVAE(object):
         return weight
 
     def _classifier_with_weight(self, x, is_training, weight):
-        n_layer = len(self.arch['classifier']['output'])
+        n_layer = len(self.arch['classifier']['layers'])
         subnet = self.arch['classifier']
+        use_bn = subnet['use_batch_norm']
         for i in range(n_layer):
-            x = tf.nn.conv2d(
-                x, weight['Conv_{}/weights'.format(i)],
-                strides=[1] + subnet['stride'][i] + [1], padding='SAME')
-            x = x + weight['Conv_{}/biases'.format(i)]
-            x = tf.nn.relu(x)
+            layer = subnet['layers'][i]
+            if layer['type'] == 'conv':
+                x = tf.nn.conv2d(
+                    x, weight['{}/weights'.format(layer['name'])],
+                    strides=[1] + layer['stride'] + [1],
+                    padding=layer['padding'].upper())
+                x = x + weight['{}/biases'.format(layer['name'])]
+                if use_bn:
+                    x = tf.layers.batch_normalization(
+                        x, scale=True, training=is_training)
+                x = tf.nn.relu(x)
+            elif layer['type'] == 'maxpool':
+                x = tf.layers.max_pooling2d(
+                    x, pool_size=layer['kernel'], strides=layer['stride'],
+                    padding=layer['padding'], name=layer['name'])
+            elif layer['type'] == 'avgpool':
+                x = tf.layers.average_pooling2d(
+                    x, pool_size=layer['kernel'], strides=layer['stride'],
+                    padding=layer['padding'], name=layer['name'])
+            else:
+                raise ValueError('Unknown layer type')
         x = slim.flatten(x)
         y_logit = tf.matmul(x, weight['fully_connected/weights'])
         y_logit = y_logit + weight['fully_connected/biases']

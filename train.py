@@ -325,13 +325,15 @@ def main():
                     y_p = list()
                     bz = 100
                     for i in range(N_TEST // bz):
-                        b_t = x_t[i * bz: (i + 1) * bz]
-                        b_t[b_t > 0.5] = 1.0  # [MAKESHIFT] Binarization
-                        b_t[b_t <= 0.5] = 0.0
-                        p = sess.run(
-                            label_pred,
-                            {X_u: b_t,
-                             net.tau: tau})
+                        if arch['image_pixel_type'] == 'binary':
+                            processed_x_t = x_t[i * bz: (i + 1) * bz]
+                            processed_x_t[processed_x_t > 0.5] = 1.0  # [MAKESHIFT] Binarization
+                            processed_x_t[processed_x_t <= 0.5] = 0.0
+                        elif arch['image_pixel_type'] == 'continuous[-1,1]':
+                            processed_x_t = x_t[i * bz: (i + 1) * bz]
+                        else:
+                            raise ValueError('Unknown image_pixel_type')
+                        p = sess.run(label_pred, {X_u: processed_x_t, net.tau: tau})
                         y_p.append(p)
                     y_p = np.concatenate(y_p, 0)
 

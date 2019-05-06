@@ -14,8 +14,18 @@
 		"output": [32, 64, 128]
 	},
 	"classifier": {
+        "use_batch_norm": false,
+        "layers": [
+            {"name": "conv_1", "type": "conv", "kernel": [5, 5],
+                "stride": [2, 2], "padding": "same", "output": 32},
+            {"name": "conv_2", "type": "conv", "kernel": [5, 5],
+                "stride": [2, 2], "padding": "same", "output": 64},
+            {"name": "conv_3", "type": "conv", "kernel": [5, 5],
+                "stride": [2, 2], "padding": "same", "output": 128}
+        ],
 		"kernel": [[5, 5], [5, 5], [5, 5]],
 		"stride": [[2, 2], [2, 2], [2, 2]],
+        "padding": ["same", "same", "same"], 
 		"output": [32, 64, 128]
 	},
 	"generator": {

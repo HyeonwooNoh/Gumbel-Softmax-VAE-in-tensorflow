@@ -17,6 +17,7 @@
 	"classifier": {
 		"kernel": [[5, 5], [5, 5], [5, 5]],
 		"stride": [[2, 2], [2, 2], [2, 2]],
+        "padding": ["same", "same", "same"], 
 		"output": [32, 64, 128],
 		"l2-reg": 1e-6
 	},
