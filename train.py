@@ -41,10 +41,17 @@ def get_optimization_ops(loss, arch):
 
     trainables = tf.trainable_variables()
     trainables = [v for v in trainables if 'Tau' not in v.name]
+    trainables = [v for v in trainables if 'classifier_batch_norm/gamma' not in v.name]
     y_embed_vars = tf.trainable_variables('y_embedding')
     classifier_vars = tf.trainable_variables('Classifier')
+    classifier_vars = [v for v in classifier_vars if 'classifier_batch_norm/gamma' not in v.name]
     generator_vars = tf.trainable_variables('Generator')
     encoder_vars = tf.trainable_variables('Encoder')
+
+    cls_bn_gamma = tf.trainable_variables('Classifier_1/classifier_batch_norm/gamma')
+    cls_bn_beta = tf.trainable_variables('Classifier_1/classifier_batch_norm/beta')
+    tf.summary.histogram('loss/Summary/classifier_batch_norm/gamma', cls_bn_gamma[0])
+    tf.summary.histogram('loss/Summary/classifier_batch_norm/beta', cls_bn_beta[0])
 
     # Labeled loss optimization
     optimize_list.append(
@@ -147,10 +154,10 @@ def main():
         print('\n{} is loaded\n'.format(args.config))
         json.dump(arch, open('{}/arch.json'.format(args.logdir), 'w'))
 
-    if arch['dataset'] == 'mnist':
-        dataset = MNISTLoader(args.datadir)
-    elif arch['dataset'] == 'cifar10':
-        dataset = CIFAR10Loader(args.datadir)
+    if arch['dataset']['name'] == 'mnist':
+        dataset = MNISTLoader(args.datadir, config=arch['dataset'])
+    elif arch['dataset']['name'] == 'cifar10':
+        dataset = CIFAR10Loader(args.datadir, config=arch['dataset'])
     else:
         raise ValueError('Unknown dataset')
 
@@ -173,10 +180,7 @@ def main():
     x_s = np.tile(x_s, [num_tile, 1, 1, 1])
     y_s = np.tile(y_s, [num_tile])
     l_index = np.arange(x_s.shape[0])
-    rng_state = np.random.RandomState(seed=123)
-    rng_state.shuffle(l_index)
-    x_s = x_s[l_index]
-    y_s = y_s[l_index].astype(np.int32)
+    rng_state = np.random.RandomState(seed=234)
 
     h, w, c = arch['hwc']
     X_u = tf.placeholder(shape=[None, h, w, c], dtype=tf.float32)
@@ -250,7 +254,10 @@ def main():
     try:
         step = 0
         for ep in range(N_EPOCH):
-            np.random.shuffle(x_u)  # shuffle
+            rng_state.shuffle(x_u)  # shuffle
+            rng_state.shuffle(l_index)
+            x_s = x_s[l_index]
+            y_s = y_s[l_index].astype(np.int32)
 
             for it in range(N_ITER):
                 step = ep * N_ITER + it
@@ -320,7 +327,8 @@ def main():
                     # writer.add_summary(summary, step)  # TODO
 
                 # Periodic evaluation
-                if it == (N_ITER - N_ITER) and ep % arch['training']['summary_freq'] == 0:
+                #if it == (N_ITER - N_ITER) and ep % arch['training']['summary_freq'] == 0:
+                if step % arch['training']['summary_freq'] == 0:
                     # ==== Classification ====
                     y_p = list()
                     bz = 100

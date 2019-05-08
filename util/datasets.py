@@ -2,6 +2,8 @@ import os
 import numpy as np
 import tensorflow as tf
 
+from util.preprocess import ZCA, ContrastNorm
+
 
 class MNISTLoader(object):
     '''
@@ -15,7 +17,12 @@ class MNISTLoader(object):
         l: labeled
         t: test
     '''
-    def __init__(self, path):
+    def __init__(self, path, config=None):
+        if config is None:
+            self.config = {'name': 'mnist'}
+        else:
+            self.config = config
+
         self.x_l = self.load_images(
             filename=os.path.join(path, 'train-images-idx3-ubyte'),
             N=60000)
@@ -93,17 +100,39 @@ class CIFAR10Loader(object):
         l: labeled
         t: test
     '''
-    def __init__(self, path):
+    def __init__(self, path, config=None):
+        if config is None:
+            self.config = {'name': 'cifar',
+                           'contrast_norm': {'scale': 55},
+                           'whiten_zca': {'n_components': 3072}}
+        else:
+            self.config = config
 
         self.path = path
         (x_l, y_l), (x_t, y_t) = tf.keras.datasets.cifar10.load_data()
-        self.x_l = x_l.astype(np.float32) / 128.0 - 1.0
+        self.x_l = x_l.astype(np.float32)
         self.y_l = np.squeeze(y_l)
-        self.x_t = x_t.astype(np.float32) / 128.0 - 1.0
+        self.x_t = x_t.astype(np.float32)
         self.y_t = np.squeeze(y_t)
         self.x_u = None
         self.y_u = None  # [TODO] actually shouldn't exist
-        self.rng_state = np.random.RandomState(seed=123)
+        self.rng_state = np.random.RandomState(seed=234)
+
+        self.normalize_data()
+
+    def normalize_data(self):
+        if 'centering' in self.config:
+            self.x_l = self.x_l / 128.0 - 1.0
+            self.x_t = self.x_t / 128.0 - 1.0
+        if 'contrast_norm' in self.config:
+            cnorm = ContrastNorm(self.config['contrast_norm']['scale'])
+            self.x_l = cnorm.apply(self.x_l)
+            self.x_t = cnorm.apply(self.x_t)
+        if 'whiten_zca' in self.config:
+            whiten = ZCA()
+            whiten.fit(self.config['whiten_zca']['n_components'], self.x_l)
+            self.x_l = whiten.apply(self.x_l)
+            self.x_t = whiten.apply(self.x_t)
 
     # ==== Ad-hoc: the following are for SSL only ====
     def divide_semisupervised(self, N_u):

@@ -45,18 +45,17 @@
             {"name": "conv_3_1", "type": "conv", "kernel": [3, 3],
                 "stride": [1, 1], "padding": "same", "output": 192,
                 "activation": {"name": "lrelu"}},
-            {"name": "conv_3_2", "type": "conv", "kernel": [3, 3],
+            {"name": "conv_3_2", "type": "conv", "kernel": [1, 1],
                 "stride": [1, 1], "padding": "same", "output": 192,
+                "activation": {"name": "lrelu"}},
+            {"name": "conv_3_3", "type": "conv", "kernel": [1, 1],
+                "stride": [1, 1], "padding": "same", "output": 10,
                 "activation": {"name": "lrelu"}},
             {"name": "avgpool_3", "type": "avgpool", "kernel": [8, 8],
                 "stride": [1, 1], "padding": "valid"},
             {"name": "flatten", "type": "flatten"},
-            {"name": "fully_connected", "type": "fully_connected", "output": 10}
-        ],
-		"kernel": [[5, 5], [5, 5], [5, 5]],
-		"stride": [[2, 2], [2, 2], [2, 2]],
-        "padding": ["same", "same", "same"], 
-		"output": [32, 64, 128]
+            {"name": "classifier_batch_norm", "type": "batch_norm"}
+        ]
 	},
 	"generator": {
         "hidden_dim": 64,
@@ -67,13 +66,13 @@
 	},
 	"training": {
 		"epoch": 301,
-		"lr": 1e-4,
+		"lr": 2e-3,
 		"beta1": 0.5,
 		"halflife": 10,
 		"largest_tau": 1.0,
 		"smallest_tau": 0.5,
 		"alpha": 1.0,
-		"summary_freq": 1,
+		"summary_freq": 100,
 		"batch_size": 100,
 		"smp_per_class": 400,
 		"num_unlabeled": 50000,

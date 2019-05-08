@@ -1,6 +1,6 @@
 {
     "image_pixel_type": "binary",
-    "dataset": "mnist",
+    "dataset": {"name": "mnist"},
 	"hwc": [28, 28, 1],
 	"z_dim": 32,
 	"y_dim": 10,

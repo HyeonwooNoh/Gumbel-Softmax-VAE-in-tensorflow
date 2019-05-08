@@ -42,9 +42,7 @@ class CVAE(object):
 
     def _sanity_check(self):
         for net in ['encoder', 'generator', 'classifier']:
-            assert len(self.arch[net]['output']) > 2
-            assert len(self.arch[net]['output']) == len(self.arch[net]['kernel'])
-            assert len(self.arch[net]['output']) == len(self.arch[net]['stride'])
+            pass
 
     def _classifier_weight(self):
         n_layer = len(self.arch['classifier']['layers'])
@@ -83,19 +81,26 @@ class CVAE(object):
                 h, w = update_spatial(h, w, layer)
             elif layer['type'] == 'avgpool':
                 h, w = update_spatial(h, w, layer)
+            elif layer['type'] == 'dropout':
+                pass
+            elif layer['type'] == 'flatten':
+                pass
+            elif layer['type'] == 'batch_norm':
+                pass
+            elif layer['type'] == 'fully_connected':
+                weight['{}/weights'.format(layer['name'])] = tf.get_variable(
+                    name='{}/weights'.format(layer['name']),
+                    shape=[h * w * input_channel, self.arch['y_dim']], dtype=tf.float32,
+                    initializer=tf.contrib.layers.xavier_initializer(),
+                )
+                weight['{}/biases'.format(layer['name'])] = tf.get_variable(
+                    name='{}/biases'.format(layer['name']),
+                    shape=[layer['output']], dtype=tf.float32,
+                    initializer=tf.initializers.zeros(),
+                )
             else:
                 raise ValueError('Unknown layer type')
 
-        weight['fully_connected/weights'] = tf.get_variable(
-            name='fully_connected/weights',
-            shape=[h * w * input_channel, self.arch['y_dim']], dtype=tf.float32,
-            initializer=tf.contrib.layers.xavier_initializer(),
-        )
-        weight['fully_connected/biases'] = tf.get_variable(
-            name='fully_connected/biases',
-            shape=[self.arch['y_dim']], dtype=tf.float32,
-            initializer=tf.initializers.zeros(),
-        )
         return weight
 
     def _classifier_with_weight(self, x, is_training, weight):
@@ -113,7 +118,14 @@ class CVAE(object):
                 if use_bn:
                     x = tf.layers.batch_normalization(
                         x, scale=True, training=is_training)
-                x = tf.nn.relu(x)
+                activation = layer.get('activation', {'name': 'relu'})
+                if activation['name'] == 'relu':
+                    x = tf.nn.relu(x)
+                elif activation['name'] == 'lrelu':
+                    x = tf.nn.leaky_relu(x, activation.get('alpha', 0.2))
+                elif activation['name'] == 'none':
+                    pass
+                else: raise ValueError('Unknown activation')
             elif layer['type'] == 'maxpool':
                 x = tf.layers.max_pooling2d(
                     x, pool_size=layer['kernel'], strides=layer['stride'],
@@ -122,11 +134,20 @@ class CVAE(object):
                 x = tf.layers.average_pooling2d(
                     x, pool_size=layer['kernel'], strides=layer['stride'],
                     padding=layer['padding'], name=layer['name'])
+            elif layer['type'] == 'dropout':
+                x = tf.layers.dropout(x, rate=layer['rate'],
+                                      training=is_training)
+            elif layer['type'] == 'flatten':
+                x = slim.flatten(x)
+            elif layer['type'] == 'batch_norm':
+                x = tf.layers.batch_normalization(
+                    x, scale=True, training=is_training, name=layer['name'])
+            elif layer['type'] == 'fully_connected':
+                x = tf.matmul(x, weight['{}/weights'.format(layer['name'])])
+                x = x + weight['{}/biases'.format(layer['name'])]
             else:
                 raise ValueError('Unknown layer type')
-        x = slim.flatten(x)
-        y_logit = tf.matmul(x, weight['fully_connected/weights'])
-        y_logit = y_logit + weight['fully_connected/biases']
+        y_logit = x
         return y_logit
 
     def _encode(self, x, y, is_training):
